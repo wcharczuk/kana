@@ -5,7 +5,7 @@ This is a simple CLI utility to help drill kana (both katakana and hiragana).
 
 ## Installation ##
 
-You must have golang installed (see: [https://golang.org/install](https://golang.org/install))
+You must have golang installed (see: [https://golang.org/doc/install#install](https://golang.org/doc/install#install))
 
 Then you can simply install with `go get`
 
