@@ -194,7 +194,7 @@ func merge(sets ...map[string]string) map[string]string {
 
 func main() {
 	includeKatakana := flag.Bool("katakana", true, "If we should quiz katakana")
-	includeHiragana := flag.Bool("hiragana", true, "If we should quiz hiragana")
+	includeHiragana := flag.Bool("hiragana", false, "If we should quiz hiragana")
 
 	flag.Parse()
 
