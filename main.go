@@ -218,8 +218,14 @@ func main() {
 			sets = append(sets, hiragana)
 		}
 		final := merge(sets...)
+		var last, kana, roman string
 		for {
-			if prompt(random(final)) {
+			kana, roman = random(final)
+			if kana == last {
+				continue
+			}
+			last = kana
+			if prompt(kana, roman) {
 				correct++
 			}
 			total++
