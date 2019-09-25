@@ -193,13 +193,20 @@ func merge(sets ...map[string]string) map[string]string {
 	return output
 }
 
-func main() {
-	includeKatakana := flag.Bool("katakana", true, "If we should quiz katakana")
-	includeHiragana := flag.Bool("hiragana", false, "If we should quiz hiragana")
+func shortBoolP(long, short string, defaultValue bool, usage string) *bool {
+	var value bool
+	flag.BoolVar(&value, long, defaultValue, usage)
+	flag.BoolVar(&value, short, defaultValue, usage+" (shorthand)")
+	return &value
+}
 
+func main() {
+	includeKatakana := shortBoolP("katakana", "k", true, "If we should quiz katakana")
+	includeHiragana := shortBoolP("hiragana", "h", true, "If we should quiz hiragana")
 	flag.Parse()
 
 	slant.Print(os.Stdout, "KANA")
+	fmt.Printf("katakana: %v, hiragana: %v\n", *includeKatakana, *includeHiragana)
 
 	var correct, total int
 	go func() {
@@ -211,7 +218,6 @@ func main() {
 			sets = append(sets, hiragana)
 		}
 		final := merge(sets...)
-
 		for {
 			if prompt(random(final)) {
 				correct++
