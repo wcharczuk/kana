@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"os"
 	"os/signal"
+	"strings"
 
 	"github.com/blend/go-sdk/ansi/slant"
 	"github.com/blend/go-sdk/sh"
@@ -163,7 +164,7 @@ const up = "\033[A"
 
 func prompt(kana, roman string) bool {
 	actual := sh.Promptf("\n%s? ", kana)
-	if actual == roman {
+	if strings.ToLower(actual) == strings.ToLower(roman) {
 		fmt.Printf("correct!")
 		return true
 	}
