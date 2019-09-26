@@ -8,8 +8,10 @@ import (
 	"os/signal"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/blend/go-sdk/ansi/slant"
+	"github.com/blend/go-sdk/mathutil"
 	"github.com/blend/go-sdk/sh"
 )
 
@@ -211,6 +213,9 @@ func incrementWrong(wrong map[string]int, kana, roman string) {
 }
 
 func printWrong(wrong map[string]int) {
+	if len(wrong) == 0 {
+		return
+	}
 	type KanaCount struct {
 		Kana  string
 		Count int
@@ -230,7 +235,7 @@ func printWrong(wrong map[string]int) {
 	for _, c := range counts {
 		output = append(output, fmt.Sprintf("%s[%d]", c.Kana, c.Count))
 	}
-	fmt.Println(strings.Join(output, ", "))
+	fmt.Println("Incorrect:", strings.Join(output, ", "))
 }
 
 func main() {
@@ -243,6 +248,7 @@ func main() {
 
 	var correct, total int
 	wrong := make(map[string]int)
+	var times []time.Duration
 	go func() {
 		var sets []map[string]string
 		if *includeKatakana {
@@ -254,17 +260,20 @@ func main() {
 		final := merge(sets...)
 
 		var last, kana, roman string
+		var start time.Time
 		for {
 			kana, roman = random(final)
 			if kana == last {
 				continue
 			}
 			last = kana
+			start = time.Now()
 			if prompt(kana, roman) {
 				correct++
 			} else {
 				incrementWrong(wrong, kana, roman)
 			}
+			times = append(times, time.Since(start))
 			total++
 		}
 	}()
@@ -273,7 +282,12 @@ func main() {
 	signal.Notify(sigint, os.Interrupt)
 	<-sigint
 	if total > 0 {
-		fmt.Printf("\nSession totals: %d/%d (%.2f%%)\n", correct, total, (float64(correct)/float64(total))*100)
+		if correct > 0 {
+			fmt.Printf("\nSession totals: %d/%d (%.2f%%)\n", correct, total, (float64(correct)/float64(total))*100)
+		} else {
+			fmt.Printf("\nSession totals: 0/%d 0.0%%\n", total)
+		}
+		fmt.Printf("Session times: p95 %v, p50: %v\n", mathutil.PercentileOfDuration(times, 95.0).Round(time.Millisecond), mathutil.PercentileOfDuration(times, 50.0).Round(time.Millisecond))
 		printWrong(wrong)
 	}
 }
