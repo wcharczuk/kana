@@ -17,6 +17,9 @@ import (
 	"github.com/blend/go-sdk/sh"
 )
 
+const resultsMaxIncorrect = 10
+const maxDedupeHistory = 5
+
 var katakana = map[string]string{
 	"ア": "a",
 	"イ": "i",
@@ -230,8 +233,8 @@ func printWrong(wrong map[string]int) {
 		return rows[i][1] > rows[j][1]
 	})
 	fmt.Println("Incorrect Answers (Top 10):")
-	if len(rows) > 10 {
-		ansi.Table(os.Stdout, columns, rows[:10])
+	if len(rows) > resultsMaxIncorrect {
+		ansi.Table(os.Stdout, columns, rows[:resultsMaxIncorrect])
 	} else {
 		ansi.Table(os.Stdout, columns, rows)
 	}
@@ -265,7 +268,7 @@ func inHistory(history []string, item string) bool {
 }
 
 func addHistory(history []string, item string) []string {
-	if len(history) < 5 {
+	if len(history) < maxDedupeHistory {
 		return append(history, item)
 	}
 	return append(history[1:], item)
