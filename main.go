@@ -164,12 +164,12 @@ var hiragana = map[string]string{
 }
 
 func prompt(kana, roman string) bool {
-	actual := sh.Promptf("\n%s? ", kana)
+	actual := sh.Promptf("%s? ", kana)
 	if strings.ToLower(actual) == strings.ToLower(roman) {
-		fmt.Printf("correct!")
+		fmt.Println("correct!")
 		return true
 	}
-	fmt.Printf("incorrect! (%s)", roman)
+	fmt.Printf("incorrect! (%s)\n", roman)
 	return false
 }
 
@@ -232,6 +232,40 @@ func printWrong(wrong map[string]int) {
 	ansi.TableForSlice(os.Stdout, counts)
 }
 
+func waitSigInt() {
+	sigint := make(chan os.Signal, 1)
+	signal.Notify(sigint, os.Interrupt)
+	<-sigint
+}
+
+func printResults(total, correct int, wrong map[string]int, times []time.Duration) {
+	if total > 0 {
+		if correct > 0 {
+			fmt.Printf("Session score: %d/%d (%.2f%%)\n", correct, total, (float64(correct)/float64(total))*100)
+		} else {
+			fmt.Printf("Session score: 0/%d 0.0%%\n", total)
+		}
+		fmt.Printf("Session times: p95 %v, p50: %v\n", mathutil.PercentileOfDuration(times, 95.0).Round(time.Millisecond), mathutil.PercentileOfDuration(times, 50.0).Round(time.Millisecond))
+		printWrong(wrong)
+	}
+}
+
+func inHistory(history []string, item string) bool {
+	for _, historyItem := range history {
+		if historyItem == item {
+			return true
+		}
+	}
+	return false
+}
+
+func addHistory(history []string, item string) []string {
+	if len(history) < 5 {
+		return append(history, item)
+	}
+	return append(history[1:], item)
+}
+
 func main() {
 	includeKatakana := shortBoolP("katakana", "k", true, "If we should quiz katakana")
 	includeHiragana := shortBoolP("hiragana", "h", true, "If we should quiz hiragana")
@@ -253,14 +287,15 @@ func main() {
 		}
 		final := merge(sets...)
 
-		var last, kana, roman string
+		var history []string
+		var kana, roman string
 		var start time.Time
 		for {
 			kana, roman = random(final)
-			if kana == last {
+			if inHistory(history, kana) {
 				continue
 			}
-			last = kana
+			history = addHistory(history, kana)
 			start = time.Now()
 			if prompt(kana, roman) {
 				correct++
@@ -272,16 +307,6 @@ func main() {
 		}
 	}()
 
-	sigint := make(chan os.Signal, 1)
-	signal.Notify(sigint, os.Interrupt)
-	<-sigint
-	if total > 0 {
-		if correct > 0 {
-			fmt.Printf("\nSession score: %d/%d (%.2f%%)\n", correct, total, (float64(correct)/float64(total))*100)
-		} else {
-			fmt.Printf("\nSession score: 0/%d 0.0%%\n", total)
-		}
-		fmt.Printf("Session times: p95 %v, p50: %v\n", mathutil.PercentileOfDuration(times, 95.0).Round(time.Millisecond), mathutil.PercentileOfDuration(times, 50.0).Round(time.Millisecond))
-		printWrong(wrong)
-	}
+	waitSigInt()
+	printResults(total, correct, wrong, times)
 }
