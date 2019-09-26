@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -214,22 +215,26 @@ func printWrong(wrong map[string]int) {
 	if len(wrong) == 0 {
 		return
 	}
-	type KanaCount struct {
-		Kana  string
-		Count int
+	columns := []string{
+		"Kana (Roman)",
+		"Count",
 	}
-	var counts []KanaCount
+	var rows [][]string
 	for kana, count := range wrong {
-		counts = append(counts, KanaCount{
-			Kana:  kana,
-			Count: count,
+		rows = append(rows, []string{
+			kana,
+			strconv.Itoa(count),
 		})
 	}
-	sort.Slice(counts, func(i, j int) bool {
-		return counts[i].Count > counts[j].Count
+	sort.Slice(rows, func(i, j int) bool {
+		return rows[i][1] > rows[j][1]
 	})
-	fmt.Println("Incorrect Answers:")
-	ansi.TableForSlice(os.Stdout, counts)
+	fmt.Println("Incorrect Answers (Top 10):")
+	if len(rows) > 10 {
+		ansi.Table(os.Stdout, columns, rows[:10])
+	} else {
+		ansi.Table(os.Stdout, columns, rows)
+	}
 }
 
 func waitSigInt() {
