@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 
 	"github.com/blend/go-sdk/ansi/slant"
@@ -200,6 +201,38 @@ func shortBoolP(long, short string, defaultValue bool, usage string) *bool {
 	return &value
 }
 
+func incrementWrong(wrong map[string]int, kana, roman string) {
+	key := fmt.Sprintf("%s %s", kana, roman)
+	if count, ok := wrong[key]; !ok {
+		wrong[key] = 1
+	} else {
+		wrong[key] = count + 1
+	}
+}
+
+func printWrong(wrong map[string]int) {
+	type KanaCount struct {
+		Kana  string
+		Count int
+	}
+	var counts []KanaCount
+	for kana, count := range wrong {
+		counts = append(counts, KanaCount{
+			Kana:  kana,
+			Count: count,
+		})
+	}
+	sort.Slice(counts, func(i, j int) bool {
+		return counts[i].Count > counts[j].Count
+	})
+
+	var output []string
+	for _, c := range counts {
+		output = append(output, fmt.Sprintf("%s (%d)", c.Kana, c.Count))
+	}
+	fmt.Println(strings.Join(output, ", "))
+}
+
 func main() {
 	includeKatakana := shortBoolP("katakana", "k", true, "If we should quiz katakana")
 	includeHiragana := shortBoolP("hiragana", "h", true, "If we should quiz hiragana")
@@ -209,6 +242,7 @@ func main() {
 	fmt.Printf("katakana: %v, hiragana: %v\n", *includeKatakana, *includeHiragana)
 
 	var correct, total int
+	wrong := make(map[string]int)
 	go func() {
 		var sets []map[string]string
 		if *includeKatakana {
@@ -218,6 +252,7 @@ func main() {
 			sets = append(sets, hiragana)
 		}
 		final := merge(sets...)
+
 		var last, kana, roman string
 		for {
 			kana, roman = random(final)
@@ -227,6 +262,8 @@ func main() {
 			last = kana
 			if prompt(kana, roman) {
 				correct++
+			} else {
+				incrementWrong(wrong, kana, roman)
 			}
 			total++
 		}
@@ -237,5 +274,6 @@ func main() {
 	<-sigint
 	if total > 0 {
 		fmt.Printf("\nSession totals: %d/%d (%.2f%%)\n", correct, total, (float64(correct)/float64(total))*100)
+		printWrong(wrong)
 	}
 }
