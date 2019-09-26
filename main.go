@@ -202,7 +202,7 @@ func shortBoolP(long, short string, defaultValue bool, usage string) *bool {
 }
 
 func incrementWrong(wrong map[string]int, kana, roman string) {
-	key := fmt.Sprintf("%s %s", kana, roman)
+	key := fmt.Sprintf("%s(%s)", kana, roman)
 	if count, ok := wrong[key]; !ok {
 		wrong[key] = 1
 	} else {
@@ -228,7 +228,7 @@ func printWrong(wrong map[string]int) {
 
 	var output []string
 	for _, c := range counts {
-		output = append(output, fmt.Sprintf("%s (%d)", c.Kana, c.Count))
+		output = append(output, fmt.Sprintf("%s[%d]", c.Kana, c.Count))
 	}
 	fmt.Println(strings.Join(output, ", "))
 }
