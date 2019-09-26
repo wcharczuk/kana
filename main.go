@@ -163,9 +163,6 @@ var hiragana = map[string]string{
 	"ぽ": "po",
 }
 
-const beginning = "\033[F"
-const up = "\033[A"
-
 func prompt(kana, roman string) bool {
 	actual := sh.Promptf("\n%s? ", kana)
 	if strings.ToLower(actual) == strings.ToLower(roman) {
