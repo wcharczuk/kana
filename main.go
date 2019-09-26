@@ -231,7 +231,6 @@ func printWrong(wrong map[string]int) {
 	sort.Slice(counts, func(i, j int) bool {
 		return counts[i].Count > counts[j].Count
 	})
-
 	ansi.TableForSlice(os.Stdout, counts)
 }
 
