@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blend/go-sdk/ansi"
 	"github.com/blend/go-sdk/ansi/slant"
 	"github.com/blend/go-sdk/mathutil"
 	"github.com/blend/go-sdk/sh"
@@ -231,11 +232,7 @@ func printWrong(wrong map[string]int) {
 		return counts[i].Count > counts[j].Count
 	})
 
-	var output []string
-	for _, c := range counts {
-		output = append(output, fmt.Sprintf("%s[%d]", c.Kana, c.Count))
-	}
-	fmt.Println("Incorrect:", strings.Join(output, ", "))
+	ansi.TableForSlice(os.Stdout, counts)
 }
 
 func main() {
