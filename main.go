@@ -21,7 +21,7 @@ const (
 	resultsMaxIncorrect = 10
 	maxDedupeHistory    = 5
 	weightFactor        = 2.0
-	weightMin           = 0.25
+	weightMin           = 0.125
 )
 
 var katakana = map[string]string{
