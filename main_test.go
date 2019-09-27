@@ -68,3 +68,18 @@ func Test_random(t *testing.T) {
 	assert.True(counts["bar"] > counts["baz"])
 	assert.True(counts["baz"] > counts["boo"])
 }
+
+func Test_applyLimit(t *testing.T) {
+	assert := assert.New(t)
+
+	values := map[string]string{
+		"foo": "f",
+		"bar": "b",
+		"moo": "m",
+		"war": "w",
+		"car": "c",
+	}
+
+	values = applyLimit(values, 3)
+	assert.Len(values, 3)
+}

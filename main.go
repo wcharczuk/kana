@@ -13,15 +13,16 @@ import (
 
 	"github.com/blend/go-sdk/ansi"
 	"github.com/blend/go-sdk/ansi/slant"
+	"github.com/blend/go-sdk/ex"
 	"github.com/blend/go-sdk/mathutil"
 	"github.com/blend/go-sdk/sh"
 )
 
 const (
-	resultsMaxIncorrect = 10
-	maxDedupeHistory    = 5
-	weightFactor        = 2.0
-	weightMin           = 0.125
+	showIncorrect = 10
+	maxHistory    = 5
+	weightFactor  = 2.0
+	weightMin     = 0.125
 )
 
 var katakana = map[string]string{
@@ -256,6 +257,13 @@ func shortBoolP(long, short string, defaultValue bool, usage string) *bool {
 	return &value
 }
 
+func shortIntP(long, short string, defaultValue int, usage string) *int {
+	var value int
+	flag.IntVar(&value, long, defaultValue, usage)
+	flag.IntVar(&value, short, defaultValue, usage+" (shorthand)")
+	return &value
+}
+
 func incrementWrong(wrong map[string]int, key string) {
 	if count, ok := wrong[key]; !ok {
 		wrong[key] = 1
@@ -284,11 +292,14 @@ func printWrong(wrong map[string]int, values map[string]string, weights map[stri
 	sort.Slice(rows, func(i, j int) bool {
 		return rows[i][1] > rows[j][1]
 	})
-	fmt.Println("Incorrect Answers (Top 10):")
-	if len(rows) > resultsMaxIncorrect {
-		ansi.Table(os.Stdout, columns, rows[:resultsMaxIncorrect])
+
+	effectiveLimit := min(showIncorrect, len(rows))
+
+	fmt.Printf("Incorrect Answers (Top %d):\n", effectiveLimit)
+	if len(rows) > effectiveLimit {
+		fatal(ansi.Table(os.Stdout, columns, rows[:effectiveLimit]))
 	} else {
-		ansi.Table(os.Stdout, columns, rows)
+		fatal(ansi.Table(os.Stdout, columns, rows))
 	}
 }
 
@@ -298,29 +309,81 @@ func waitSigInt() {
 	<-sigint
 }
 
-func inHistory(history []string, item string) bool {
-	for _, historyItem := range history {
-		if historyItem == item {
+func applyLimit(values map[string]string, limit int) map[string]string {
+	if len(values) <= limit {
+		return values
+	}
+	output := make(map[string]string)
+	for key, value := range values {
+		output[key] = value
+		if len(output) == limit {
+			break
+		}
+	}
+	return output
+}
+
+// inList returns if a value is present in a list
+func inList(list []string, value string) bool {
+	for _, listValue := range list {
+		if listValue == value {
 			return true
 		}
 	}
 	return false
 }
 
-func addHistory(history []string, item string) []string {
-	if len(history) < maxDedupeHistory {
-		return append(history, item)
+// addFixedList adds a value to a given list
+func addFixedList(list []string, value string, max int) []string {
+	list = append(list, value)
+	if len(list) < max {
+		return list
 	}
-	return append(history[1:], item)
+	return list[1:]
+}
+
+func min(values ...int) int {
+	if len(values) == 0 {
+		return 0
+	}
+	working := values[0]
+	for _, value := range values[1:] {
+		if value < working {
+			working = value
+		}
+	}
+	return working
+}
+
+func fatal(err error) {
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%+v\n", err)
+		os.Exit(1)
+	}
+}
+
+func formatBoolP(value *bool) string {
+	if value == nil {
+		return "n/a"
+	}
+	return ansi.ColorLightWhite.Apply(strconv.FormatBool(*value))
+}
+
+func formatIntP(value *int) string {
+	if value == nil || *value == 0 {
+		return "n/a"
+	}
+	return ansi.ColorLightWhite.Apply(strconv.Itoa(*value))
 }
 
 func main() {
 	includeKatakana := shortBoolP("katakana", "k", true, "If we should quiz katakana")
 	includeHiragana := shortBoolP("hiragana", "h", true, "If we should quiz hiragana")
+	limit := shortIntP("limit", "l", 0, "A limit for the number of kana to test")
 	flag.Parse()
 
 	slant.Print(os.Stdout, "KANA")
-	fmt.Printf("katakana: %v, hiragana: %v\n", *includeKatakana, *includeHiragana)
+	fmt.Printf("katakana: %v, hiragana: %v, limit: %v\n", formatBoolP(includeKatakana), formatBoolP(includeHiragana), formatIntP(limit))
 
 	var correct, total int
 	var times []time.Duration
@@ -332,20 +395,39 @@ func main() {
 	if *includeHiragana {
 		sets = append(sets, hiragana)
 	}
-	final := merge(sets...)
-	weights := createWeights(final)
+	values := merge(sets...)
+
+	if *limit > 0 {
+		values = applyLimit(values, *limit)
+	}
+
+	weights := createWeights(values)
 	wrong := make(map[string]int)
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				fatal(ex.New(r))
+			}
+		}()
+
 		var history []string
 		var kana, roman string
 		var start time.Time
+
+		effectiveMaxHistory := maxHistory
+		if *limit > 0 && maxHistory >= *limit {
+			effectiveMaxHistory = (*limit) >> 1
+		}
+
 		for {
-			kana, roman = random(weights, final)
-			if inHistory(history, kana) {
+			kana, roman = random(weights, values)
+
+			if inList(history, kana) {
 				continue
 			}
-			history = addHistory(history, kana)
+			history = addFixedList(history, kana, effectiveMaxHistory)
+
 			start = time.Now()
 			if prompt(kana, roman) {
 				correct++
@@ -361,12 +443,13 @@ func main() {
 
 	waitSigInt()
 	if total > 0 {
+		fmt.Println()
 		if correct > 0 {
 			fmt.Printf("Session score: %d/%d (%.2f%%)\n", correct, total, (float64(correct)/float64(total))*100)
 		} else {
 			fmt.Printf("Session score: 0/%d 0.0%%\n", total)
 		}
 		fmt.Printf("Session times: p95 %v, p50: %v\n", mathutil.PercentileOfDuration(times, 95.0).Round(time.Millisecond), mathutil.PercentileOfDuration(times, 50.0).Round(time.Millisecond))
-		printWrong(wrong, final, weights)
+		printWrong(wrong, values, weights)
 	}
 }
