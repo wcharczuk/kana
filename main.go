@@ -17,8 +17,12 @@ import (
 	"github.com/blend/go-sdk/sh"
 )
 
-const resultsMaxIncorrect = 10
-const maxDedupeHistory = 5
+const (
+	resultsMaxIncorrect = 10
+	maxDedupeHistory    = 5
+	weightFactor        = 2.0
+	weightMin           = 0.25
+)
 
 var katakana = map[string]string{
 	"ア": "a",
@@ -177,13 +181,60 @@ func prompt(kana, roman string) bool {
 	return false
 }
 
-func random(values map[string]string) (kana, roman string) {
-	var keys []string
+// createWeights creates a weight map for a given set of values.
+func createWeights(values map[string]string) map[string]float64 {
+	output := make(map[string]float64)
 	for key := range values {
-		keys = append(keys, key)
+		output[key] = 1.0
 	}
-	randomIndex := rand.Intn(len(keys))
-	kana = keys[randomIndex]
+	return output
+}
+
+func increaseWeight(weights map[string]float64, value string) {
+	if weight, ok := weights[value]; ok {
+		weights[value] = weight * weightFactor
+	}
+}
+
+func decreaseWeight(weights map[string]float64, value string) {
+	if weight, ok := weights[value]; ok {
+		if weight <= weightMin {
+			return
+		}
+		weights[value] = weight / weightFactor
+	}
+}
+
+func random(weights map[string]float64, values map[string]string) (kana, roman string) {
+	// collect "weighted" choices
+	type weightedChoice struct {
+		Key    string
+		Weight float64
+	}
+	var keys []weightedChoice
+	for key := range values {
+		keys = append(keys, weightedChoice{
+			Key:    key,
+			Weight: weights[key],
+		})
+	}
+
+	// sort by weight ascending
+	sort.Slice(keys, func(i, j int) bool {
+		return keys[i].Weight < keys[j].Weight
+	})
+
+	// sum all the weights, assign to indexes
+	totals := make([]float64, len(keys))
+	var runningTotal float64
+	for index, wc := range keys {
+		runningTotal += wc.Weight
+		totals[index] = runningTotal
+	}
+	randomValue := rand.Float64() * runningTotal
+	randomIndex := sort.SearchFloat64s(totals, randomValue)
+
+	kana = keys[randomIndex].Key
 	roman = values[kana]
 	return
 }
@@ -205,8 +256,7 @@ func shortBoolP(long, short string, defaultValue bool, usage string) *bool {
 	return &value
 }
 
-func incrementWrong(wrong map[string]int, kana, roman string) {
-	key := fmt.Sprintf("%s(%s)", kana, roman)
+func incrementWrong(wrong map[string]int, key string) {
 	if count, ok := wrong[key]; !ok {
 		wrong[key] = 1
 	} else {
@@ -214,19 +264,21 @@ func incrementWrong(wrong map[string]int, kana, roman string) {
 	}
 }
 
-func printWrong(wrong map[string]int) {
+func printWrong(wrong map[string]int, values map[string]string, weights map[string]float64) {
 	if len(wrong) == 0 {
 		return
 	}
 	columns := []string{
 		"Kana (Roman)",
 		"Count",
+		"Selection Weight",
 	}
 	var rows [][]string
 	for kana, count := range wrong {
 		rows = append(rows, []string{
-			kana,
+			fmt.Sprintf("%s (%s)", kana, values[kana]),
 			strconv.Itoa(count),
+			fmt.Sprintf("%.2f", weights[kana]),
 		})
 	}
 	sort.Slice(rows, func(i, j int) bool {
@@ -244,18 +296,6 @@ func waitSigInt() {
 	sigint := make(chan os.Signal, 1)
 	signal.Notify(sigint, os.Interrupt)
 	<-sigint
-}
-
-func printResults(total, correct int, wrong map[string]int, times []time.Duration) {
-	if total > 0 {
-		if correct > 0 {
-			fmt.Printf("Session score: %d/%d (%.2f%%)\n", correct, total, (float64(correct)/float64(total))*100)
-		} else {
-			fmt.Printf("Session score: 0/%d 0.0%%\n", total)
-		}
-		fmt.Printf("Session times: p95 %v, p50: %v\n", mathutil.PercentileOfDuration(times, 95.0).Round(time.Millisecond), mathutil.PercentileOfDuration(times, 50.0).Round(time.Millisecond))
-		printWrong(wrong)
-	}
 }
 
 func inHistory(history []string, item string) bool {
@@ -283,23 +323,25 @@ func main() {
 	fmt.Printf("katakana: %v, hiragana: %v\n", *includeKatakana, *includeHiragana)
 
 	var correct, total int
-	wrong := make(map[string]int)
 	var times []time.Duration
-	go func() {
-		var sets []map[string]string
-		if *includeKatakana {
-			sets = append(sets, katakana)
-		}
-		if *includeHiragana {
-			sets = append(sets, hiragana)
-		}
-		final := merge(sets...)
 
+	var sets []map[string]string
+	if *includeKatakana {
+		sets = append(sets, katakana)
+	}
+	if *includeHiragana {
+		sets = append(sets, hiragana)
+	}
+	final := merge(sets...)
+	weights := createWeights(final)
+	wrong := make(map[string]int)
+
+	go func() {
 		var history []string
 		var kana, roman string
 		var start time.Time
 		for {
-			kana, roman = random(final)
+			kana, roman = random(weights, final)
 			if inHistory(history, kana) {
 				continue
 			}
@@ -307,8 +349,10 @@ func main() {
 			start = time.Now()
 			if prompt(kana, roman) {
 				correct++
+				decreaseWeight(weights, kana)
 			} else {
-				incrementWrong(wrong, kana, roman)
+				increaseWeight(weights, kana)
+				incrementWrong(wrong, kana)
 			}
 			times = append(times, time.Since(start))
 			total++
@@ -316,5 +360,13 @@ func main() {
 	}()
 
 	waitSigInt()
-	printResults(total, correct, wrong, times)
+	if total > 0 {
+		if correct > 0 {
+			fmt.Printf("Session score: %d/%d (%.2f%%)\n", correct, total, (float64(correct)/float64(total))*100)
+		} else {
+			fmt.Printf("Session score: 0/%d 0.0%%\n", total)
+		}
+		fmt.Printf("Session times: p95 %v, p50: %v\n", mathutil.PercentileOfDuration(times, 95.0).Round(time.Millisecond), mathutil.PercentileOfDuration(times, 50.0).Round(time.Millisecond))
+		printWrong(wrong, final, weights)
+	}
 }
