@@ -19,12 +19,12 @@ import (
 )
 
 const (
-	maxResultsIncorrectShown = 10
-	maxRepeatHistory         = 5
-	weightDefault            = 1.0
-	weightFactor             = 2.0
-	weightMax                = 512.0
-	weightMin                = 0.0625
+	maxRepeatHistory     = 5
+	weightDefault        = 1.0
+	weightIncreaseFactor = 8.0
+	weightDecreaseFactor = 2.0
+	weightMax            = 512.0
+	weightMin            = 0.0625
 )
 
 func main() {
@@ -276,7 +276,7 @@ func createWeights(values map[string]string) map[string]float64 {
 func increaseWeight(weights map[string]float64, value string) {
 	if weight, ok := weights[value]; ok {
 		if weight < weightMax {
-			weights[value] = weight * weightFactor
+			weights[value] = weight * weightIncreaseFactor
 		}
 	}
 }
@@ -286,7 +286,7 @@ func decreaseWeight(weights map[string]float64, value string) {
 		if weight <= weightMin {
 			return
 		}
-		weights[value] = weight / weightFactor
+		weights[value] = weight / weightDecreaseFactor
 	}
 }
 
@@ -356,7 +356,7 @@ func incrementCount(values map[string]int, key string) {
 	}
 }
 
-func printResults(correct, incorrect map[string]int, kanaRoman map[string]string, weights map[string]float64) {
+func printResults(correct, incorrect map[string]int, values map[string]string, weights map[string]float64, times map[string][]time.Duration) {
 	if len(incorrect) == 0 {
 		return
 	}
@@ -383,14 +383,8 @@ func printResults(correct, incorrect map[string]int, kanaRoman map[string]string
 		return rows[i][1] > rows[j][1]
 	})
 
-	effectiveLimit := min(maxResultsIncorrectShown, len(rows))
-
-	fmt.Printf("Incorrect Answers (Top %d):\n", effectiveLimit)
-	if len(rows) > effectiveLimit {
-		fatal(ansi.Table(os.Stdout, columns, rows[:effectiveLimit]))
-	} else {
-		fatal(ansi.Table(os.Stdout, columns, rows))
-	}
+	fmt.Println("Results:")
+	fatal(ansi.Table(os.Stdout, columns, rows))
 }
 
 func waitSigInt() {
