@@ -19,12 +19,96 @@ import (
 )
 
 const (
-	showIncorrect = 10
-	maxHistory    = 5
-	weightFactor  = 2.0
-	weightMax     = 512.0
-	weightMin     = 0.0625
+	maxResultsIncorrectShown = 10
+	maxRepeatHistory         = 5
+	weightDefault            = 1.0
+	weightFactor             = 2.0
+	weightMax                = 512.0
+	weightMin                = 0.0625
 )
+
+func main() {
+	includeKatakana := shortBoolP("katakana", "k", true, "If we should quiz katakana")
+	includeHiragana := shortBoolP("hiragana", "h", true, "If we should quiz hiragana")
+	limit := shortIntP("limit", "l", 0, "A limit for the number of kana to test")
+	flag.Parse()
+
+	slant.Print(os.Stdout, "KANA")
+	fmt.Printf("katakana: %v, hiragana: %v, limit: %v\n", formatBoolP(includeKatakana), formatBoolP(includeHiragana), formatIntP(limit))
+
+	var total, totalCorrect int
+	var times []time.Duration
+
+	var sets []map[string]string
+	if *includeKatakana {
+		sets = append(sets, katakana)
+	}
+	if *includeHiragana {
+		sets = append(sets, hiragana)
+	}
+	values := mergeSets(sets...)
+
+	if *limit > 0 {
+		values = selectCount(values, *limit)
+	}
+
+	weights := createWeights(values)
+	correct := make(map[string]int)
+	incorrect := make(map[string]int)
+
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				fatal(ex.New(r))
+			}
+		}()
+
+		var history []string
+		var kana, roman string
+		var start time.Time
+
+		effectiveMaxRepeatHistory := maxRepeatHistory
+		if maxRepeatHistory >= len(values) {
+			effectiveMaxRepeatHistory = len(values) >> 1
+		}
+
+		for {
+			kana, roman = selectWeighted(values, weights)
+
+			if listHas(history, kana) {
+				continue
+			}
+			history = listAddFixedLength(history, kana, effectiveMaxRepeatHistory)
+
+			start = time.Now()
+			total++
+
+			if prompt(kana, roman) {
+				decreaseWeight(weights, kana)
+				incrementCount(correct, kana)
+				totalCorrect++
+				fmt.Printf("(%d/%d) correct!\n", totalCorrect, total)
+			} else {
+				increaseWeight(weights, kana)
+				incrementCount(incorrect, kana)
+				fmt.Printf("(%d/%d) incorrect (%s)!\n", totalCorrect, total, roman)
+			}
+			times = append(times, time.Since(start))
+		}
+	}()
+
+	waitSigInt()
+	if total > 0 {
+		fmt.Println()
+		if totalCorrect > 0 {
+			fmt.Printf("Session score: %d/%d (%.2f%%)\n", totalCorrect, total, (float64(totalCorrect)/float64(total))*100)
+		} else {
+			fmt.Printf("Session score: 0/%d 0.0%%\n", total)
+		}
+		fmt.Printf("Session times: p95 %v, p50: %v\n", mathutil.PercentileOfDuration(times, 95.0).Round(time.Millisecond), mathutil.PercentileOfDuration(times, 50.0).Round(time.Millisecond))
+		printResults(correct, incorrect, values, weights)
+	}
+}
 
 var katakana = map[string]string{
 	"ア": "a",
@@ -173,19 +257,18 @@ var hiragana = map[string]string{
 	"ぽ": "po",
 }
 
-func prompt(kana, roman string) bool {
-	actual := sh.Promptf("%s? ", kana)
-	if strings.ToLower(actual) == strings.ToLower(roman) {
+func prompt(question, expected string) bool {
+	actual := sh.Promptf("%s? ", question)
+	if strings.ToLower(actual) == strings.ToLower(expected) {
 		return true
 	}
 	return false
 }
 
-// createWeights creates a weight map for a given set of values.
 func createWeights(values map[string]string) map[string]float64 {
 	output := make(map[string]float64)
 	for key := range values {
-		output[key] = 1.0
+		output[key] = weightDefault
 	}
 	return output
 }
@@ -207,7 +290,7 @@ func decreaseWeight(weights map[string]float64, value string) {
 	}
 }
 
-func random(weights map[string]float64, values map[string]string) (kana, roman string) {
+func selectWeighted(values map[string]string, weights map[string]float64) (kana, roman string) {
 	// collect "weighted" choices
 	type weightedChoice struct {
 		Key    string
@@ -241,7 +324,7 @@ func random(weights map[string]float64, values map[string]string) (kana, roman s
 	return
 }
 
-func merge(sets ...map[string]string) map[string]string {
+func mergeSets(sets ...map[string]string) map[string]string {
 	output := make(map[string]string)
 	for _, set := range sets {
 		for key, value := range set {
@@ -265,36 +348,42 @@ func shortIntP(long, short string, defaultValue int, usage string) *int {
 	return &value
 }
 
-func incrementWrong(wrong map[string]int, key string) {
-	if count, ok := wrong[key]; !ok {
-		wrong[key] = 1
+func incrementCount(values map[string]int, key string) {
+	if count, ok := values[key]; !ok {
+		values[key] = 1
 	} else {
-		wrong[key] = count + 1
+		values[key] = count + 1
 	}
 }
 
-func printWrong(wrong map[string]int, values map[string]string, weights map[string]float64) {
-	if len(wrong) == 0 {
+func printResults(correct, incorrect map[string]int, kanaRoman map[string]string, weights map[string]float64) {
+	if len(incorrect) == 0 {
 		return
 	}
 	columns := []string{
 		"Kana (Roman)",
-		"Count",
+		"Correct",
+		"Incorrect",
 		"Selection Weight",
 	}
 	var rows [][]string
-	for kana, count := range wrong {
-		rows = append(rows, []string{
-			fmt.Sprintf("%s (%s)", kana, values[kana]),
-			strconv.Itoa(count),
-			fmt.Sprintf("%.2f", weights[kana]),
-		})
+	for kana, roman := range values {
+		correctCount, hasCorrect := correct[kana]
+		incorrectCount, hasIncorrect := incorrect[kana]
+		if hasCorrect || hasIncorrect {
+			rows = append(rows, []string{
+				fmt.Sprintf("%s (%s)", kana, roman),
+				strconv.Itoa(correctCount),
+				strconv.Itoa(incorrectCount),
+				fmt.Sprintf("%.2f", weights[kana]),
+			})
+		}
 	}
 	sort.Slice(rows, func(i, j int) bool {
 		return rows[i][1] > rows[j][1]
 	})
 
-	effectiveLimit := min(showIncorrect, len(rows))
+	effectiveLimit := min(maxResultsIncorrectShown, len(rows))
 
 	fmt.Printf("Incorrect Answers (Top %d):\n", effectiveLimit)
 	if len(rows) > effectiveLimit {
@@ -310,22 +399,22 @@ func waitSigInt() {
 	<-sigint
 }
 
-func applyLimit(values map[string]string, limit int) map[string]string {
-	if len(values) <= limit {
+func selectCount(values map[string]string, count int) map[string]string {
+	if len(values) <= count {
 		return values
 	}
 	output := make(map[string]string)
 	for key, value := range values {
 		output[key] = value
-		if len(output) == limit {
+		if len(output) == count {
 			break
 		}
 	}
 	return output
 }
 
-// inList returns if a value is present in a list
-func inList(list []string, value string) bool {
+// listHas returns if a value is present in a list
+func listHas(list []string, value string) bool {
 	for _, listValue := range list {
 		if listValue == value {
 			return true
@@ -335,7 +424,7 @@ func inList(list []string, value string) bool {
 }
 
 // addFixedList adds a value to a given list
-func addFixedList(list []string, value string, max int) []string {
+func listAddFixedLength(list []string, value string, max int) []string {
 	list = append(list, value)
 	if len(list) < max {
 		return list
@@ -375,84 +464,4 @@ func formatIntP(value *int) string {
 		return "n/a"
 	}
 	return ansi.ColorLightWhite.Apply(strconv.Itoa(*value))
-}
-
-func main() {
-	includeKatakana := shortBoolP("katakana", "k", true, "If we should quiz katakana")
-	includeHiragana := shortBoolP("hiragana", "h", true, "If we should quiz hiragana")
-	limit := shortIntP("limit", "l", 0, "A limit for the number of kana to test")
-	flag.Parse()
-
-	slant.Print(os.Stdout, "KANA")
-	fmt.Printf("katakana: %v, hiragana: %v, limit: %v\n", formatBoolP(includeKatakana), formatBoolP(includeHiragana), formatIntP(limit))
-
-	var correct, total int
-	var times []time.Duration
-
-	var sets []map[string]string
-	if *includeKatakana {
-		sets = append(sets, katakana)
-	}
-	if *includeHiragana {
-		sets = append(sets, hiragana)
-	}
-	values := merge(sets...)
-
-	if *limit > 0 {
-		values = applyLimit(values, *limit)
-	}
-
-	weights := createWeights(values)
-	wrong := make(map[string]int)
-
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				fatal(ex.New(r))
-			}
-		}()
-
-		var history []string
-		var kana, roman string
-		var start time.Time
-
-		effectiveMaxHistory := maxHistory
-		if *limit > 0 && maxHistory >= *limit {
-			effectiveMaxHistory = (*limit) >> 1
-		}
-
-		for {
-			kana, roman = random(weights, values)
-
-			if inList(history, kana) {
-				continue
-			}
-			history = addFixedList(history, kana, effectiveMaxHistory)
-
-			start = time.Now()
-			total++
-			if prompt(kana, roman) {
-				correct++
-				decreaseWeight(weights, kana)
-				fmt.Printf("(%d/%d) correct!\n", correct, total)
-			} else {
-				increaseWeight(weights, kana)
-				incrementWrong(wrong, kana)
-				fmt.Printf("(%d/%d) incorrect (%s)!\n", correct, total, roman)
-			}
-			times = append(times, time.Since(start))
-		}
-	}()
-
-	waitSigInt()
-	if total > 0 {
-		fmt.Println()
-		if correct > 0 {
-			fmt.Printf("Session score: %d/%d (%.2f%%)\n", correct, total, (float64(correct)/float64(total))*100)
-		} else {
-			fmt.Printf("Session score: 0/%d 0.0%%\n", total)
-		}
-		fmt.Printf("Session times: p95 %v, p50: %v\n", mathutil.PercentileOfDuration(times, 95.0).Round(time.Millisecond), mathutil.PercentileOfDuration(times, 50.0).Round(time.Millisecond))
-		printWrong(wrong, values, weights)
-	}
 }
