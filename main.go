@@ -22,7 +22,8 @@ const (
 	showIncorrect = 10
 	maxHistory    = 5
 	weightFactor  = 2.0
-	weightMin     = 0.125
+	weightMax     = 512.0
+	weightMin     = 0.0625
 )
 
 var katakana = map[string]string{
@@ -175,10 +176,8 @@ var hiragana = map[string]string{
 func prompt(kana, roman string) bool {
 	actual := sh.Promptf("%s? ", kana)
 	if strings.ToLower(actual) == strings.ToLower(roman) {
-		fmt.Println("correct!")
 		return true
 	}
-	fmt.Printf("incorrect! (%s)\n", roman)
 	return false
 }
 
@@ -193,7 +192,9 @@ func createWeights(values map[string]string) map[string]float64 {
 
 func increaseWeight(weights map[string]float64, value string) {
 	if weight, ok := weights[value]; ok {
-		weights[value] = weight * weightFactor
+		if weight < weightMax {
+			weights[value] = weight * weightFactor
+		}
 	}
 }
 
@@ -429,15 +430,17 @@ func main() {
 			history = addFixedList(history, kana, effectiveMaxHistory)
 
 			start = time.Now()
+			total++
 			if prompt(kana, roman) {
 				correct++
 				decreaseWeight(weights, kana)
+				fmt.Printf("(%d/%d) correct!\n", correct, total)
 			} else {
 				increaseWeight(weights, kana)
 				incrementWrong(wrong, kana)
+				fmt.Printf("(%d/%d) incorrect (%s)!\n", correct, total, roman)
 			}
 			times = append(times, time.Since(start))
-			total++
 		}
 	}()
 
