@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"math/rand"
@@ -36,7 +37,7 @@ func main() {
 	slant.Print(os.Stdout, "KANA")
 	fmt.Printf("katakana: %v, hiragana: %v, limit: %v\n", formatBoolP(includeKatakana), formatBoolP(includeHiragana), formatIntP(limit))
 
-	var total, totalCorrect int
+	var totalAnswered, totalCorrect int
 	var times []time.Duration
 
 	var sets []map[string]string
@@ -53,8 +54,24 @@ func main() {
 	}
 
 	weights := createWeights(values)
-	correct := make(map[string]int)
+	total := make(map[string]int)
 	incorrect := make(map[string]int)
+	kanaTimes := make(map[string][]time.Duration)
+
+	finish := func() {
+		fmt.Println()
+		fmt.Println("Complete!")
+		if totalAnswered > 0 {
+			if totalCorrect > 0 {
+				fmt.Printf("Total score: %d/%d (%.2f%%)\n", totalCorrect, totalAnswered, (float64(totalCorrect)/float64(totalAnswered))*100)
+			} else {
+				fmt.Printf("Total score: 0/%d 0.0%%\n", totalAnswered)
+			}
+			fmt.Printf("Total times: p95 %v, p50: %v\n", mathutil.PercentileOfDuration(times, 95.0).Round(time.Millisecond), mathutil.PercentileOfDuration(times, 50.0).Round(time.Millisecond))
+			printResults(total, incorrect, values, weights, kanaTimes)
+		}
+		os.Exit(0)
+	}
 
 	go func() {
 		defer func() {
@@ -66,6 +83,9 @@ func main() {
 		var history []string
 		var kana, roman string
 		var start time.Time
+		var elapsed time.Duration
+		var isCorrect bool
+		var err error
 
 		effectiveMaxRepeatHistory := maxRepeatHistory
 		if maxRepeatHistory >= len(values) {
@@ -81,33 +101,31 @@ func main() {
 			history = listAddFixedLength(history, kana, effectiveMaxRepeatHistory)
 
 			start = time.Now()
-			total++
+			totalAnswered++
+			incrementCount(total, kana)
 
-			if prompt(kana, roman) {
+			if isCorrect, err = prompt(kana, roman); err != nil {
+				if err == errQuit {
+					finish()
+				}
+			} else if isCorrect {
 				decreaseWeight(weights, kana)
-				incrementCount(correct, kana)
 				totalCorrect++
-				fmt.Printf("(%d/%d) correct!\n", totalCorrect, total)
+				fmt.Printf("(%d/%d) correct!\n", totalCorrect, totalAnswered)
 			} else {
 				increaseWeight(weights, kana)
 				incrementCount(incorrect, kana)
-				fmt.Printf("(%d/%d) incorrect (%s)!\n", totalCorrect, total, roman)
+				fmt.Printf("(%d/%d) incorrect (%s)!\n", totalCorrect, totalAnswered, roman)
 			}
-			times = append(times, time.Since(start))
+
+			elapsed = time.Since(start)
+			kanaTimes[kana] = append(kanaTimes[kana], elapsed)
+			times = append(times, elapsed)
 		}
 	}()
 
 	waitSigInt()
-	if total > 0 {
-		fmt.Println()
-		if totalCorrect > 0 {
-			fmt.Printf("Session score: %d/%d (%.2f%%)\n", totalCorrect, total, (float64(totalCorrect)/float64(total))*100)
-		} else {
-			fmt.Printf("Session score: 0/%d 0.0%%\n", total)
-		}
-		fmt.Printf("Session times: p95 %v, p50: %v\n", mathutil.PercentileOfDuration(times, 95.0).Round(time.Millisecond), mathutil.PercentileOfDuration(times, 50.0).Round(time.Millisecond))
-		printResults(correct, incorrect, values, weights)
-	}
+	finish()
 }
 
 var katakana = map[string]string{
@@ -257,12 +275,19 @@ var hiragana = map[string]string{
 	"ぽ": "po",
 }
 
-func prompt(question, expected string) bool {
+var errQuit = errors.New("should quit")
+
+func prompt(question, expected string) (bool, error) {
 	actual := sh.Promptf("%s? ", question)
-	if strings.ToLower(actual) == strings.ToLower(expected) {
-		return true
+	switch strings.ToLower(strings.TrimSpace(actual)) {
+	case "quit", "q":
+		return false, errQuit
+
 	}
-	return false
+	if strings.ToLower(actual) == strings.ToLower(expected) {
+		return true, nil
+	}
+	return false, nil
 }
 
 func createWeights(values map[string]string) map[string]float64 {
@@ -356,31 +381,36 @@ func incrementCount(values map[string]int, key string) {
 	}
 }
 
-func printResults(correct, incorrect map[string]int, values map[string]string, weights map[string]float64, times map[string][]time.Duration) {
+func printResults(total, incorrect map[string]int, values map[string]string, weights map[string]float64, kanaTimes map[string][]time.Duration) {
 	if len(incorrect) == 0 {
 		return
 	}
 	columns := []string{
 		"Kana (Roman)",
-		"Correct",
+		"Total",
 		"Incorrect",
 		"Selection Weight",
+		"P95",
+		"P50",
 	}
 	var rows [][]string
 	for kana, roman := range values {
-		correctCount, hasCorrect := correct[kana]
-		incorrectCount, hasIncorrect := incorrect[kana]
-		if hasCorrect || hasIncorrect {
+		totalCount, hasTotal := total[kana]
+		incorrectCount := incorrect[kana]
+		if hasTotal {
 			rows = append(rows, []string{
 				fmt.Sprintf("%s (%s)", kana, roman),
-				strconv.Itoa(correctCount),
+				strconv.Itoa(totalCount),
 				strconv.Itoa(incorrectCount),
 				fmt.Sprintf("%.2f", weights[kana]),
+				fmt.Sprint(mathutil.PercentileOfDuration(kanaTimes[kana], 95.0).Round(time.Millisecond)),
+				fmt.Sprint(mathutil.PercentileOfDuration(kanaTimes[kana], 50.0).Round(time.Millisecond)),
 			})
 		}
 	}
 	sort.Slice(rows, func(i, j int) bool {
-		return rows[i][1] > rows[j][1]
+		// sort by weight
+		return rows[i][3] > rows[j][3]
 	})
 
 	fmt.Println("Results:")
