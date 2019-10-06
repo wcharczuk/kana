@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bufio"
 	"errors"
 	"flag"
 	"fmt"
+	"math"
 	"math/rand"
 	"os"
 	"os/signal"
@@ -13,10 +15,6 @@ import (
 	"time"
 
 	"github.com/blend/go-sdk/ansi"
-	"github.com/blend/go-sdk/ansi/slant"
-	"github.com/blend/go-sdk/ex"
-	"github.com/blend/go-sdk/mathutil"
-	"github.com/blend/go-sdk/sh"
 )
 
 const (
@@ -29,13 +27,10 @@ const (
 )
 
 func main() {
-	includeKatakana := shortBoolP("katakana", "k", true, "If we should quiz katakana")
-	includeHiragana := shortBoolP("hiragana", "h", true, "If we should quiz hiragana")
-	limit := shortIntP("limit", "l", 0, "A limit for the number of kana to test")
+	includeKatakana := flagBoolP("katakana", "k", true, "If we should quiz katakana")
+	includeHiragana := flagBoolP("hiragana", "h", true, "If we should quiz hiragana")
+	limit := flagIntP("limit", "l", 0, "A limit for the number of kana to test")
 	flag.Parse()
-
-	slant.Print(os.Stdout, "KANA")
-	fmt.Printf("katakana: %v, hiragana: %v, limit: %v\n", formatBoolP(includeKatakana), formatBoolP(includeHiragana), formatIntP(limit))
 
 	var totalAnswered, totalCorrect int
 	var times []time.Duration
@@ -67,7 +62,7 @@ func main() {
 			} else {
 				fmt.Printf("Total score: 0/%d 0.0%%\n", totalAnswered)
 			}
-			fmt.Printf("Total times: p95 %v, p50: %v\n", mathutil.PercentileOfDuration(times, 95.0).Round(time.Millisecond), mathutil.PercentileOfDuration(times, 50.0).Round(time.Millisecond))
+			fmt.Printf("Total times: p95 %v, p50: %v\n", percentileOfDuration(times, 95.0).Round(time.Millisecond), percentileOfDuration(times, 50.0).Round(time.Millisecond))
 			printResults(total, incorrect, values, weights, kanaTimes)
 		}
 		os.Exit(0)
@@ -76,7 +71,7 @@ func main() {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				fatal(ex.New(r))
+				fatal(fmt.Errorf("%v", r))
 			}
 		}()
 
@@ -104,7 +99,7 @@ func main() {
 			totalAnswered++
 			incrementCount(total, kana)
 
-			if isCorrect, err = prompt(kana, roman); err != nil {
+			if isCorrect, err = ask(kana, roman); err != nil {
 				if err == errQuit {
 					finish()
 				}
@@ -277,8 +272,18 @@ var hiragana = map[string]string{
 
 var errQuit = errors.New("should quit")
 
-func prompt(question, expected string) (bool, error) {
-	actual := sh.Promptf("%s? ", question)
+func promptf(format string, args ...interface{}) string {
+	fmt.Fprintf(os.Stdout, format, args...)
+	scanner := bufio.NewScanner(os.Stdin)
+	var output string
+	if scanner.Scan() {
+		output = scanner.Text()
+	}
+	return output
+}
+
+func ask(question, expected string) (bool, error) {
+	actual := promptf("%s? ", question)
 	switch strings.ToLower(strings.TrimSpace(actual)) {
 	case "quit", "q":
 		return false, errQuit
@@ -359,14 +364,14 @@ func mergeSets(sets ...map[string]string) map[string]string {
 	return output
 }
 
-func shortBoolP(long, short string, defaultValue bool, usage string) *bool {
+func flagBoolP(long, short string, defaultValue bool, usage string) *bool {
 	var value bool
 	flag.BoolVar(&value, long, defaultValue, usage)
 	flag.BoolVar(&value, short, defaultValue, usage+" (shorthand)")
 	return &value
 }
 
-func shortIntP(long, short string, defaultValue int, usage string) *int {
+func flagIntP(long, short string, defaultValue int, usage string) *int {
 	var value int
 	flag.IntVar(&value, long, defaultValue, usage)
 	flag.IntVar(&value, short, defaultValue, usage+" (shorthand)")
@@ -403,8 +408,8 @@ func printResults(total, incorrect map[string]int, values map[string]string, wei
 				strconv.Itoa(totalCount),
 				strconv.Itoa(incorrectCount),
 				fmt.Sprintf("%.2f", weights[kana]),
-				fmt.Sprint(mathutil.PercentileOfDuration(kanaTimes[kana], 95.0).Round(time.Millisecond)),
-				fmt.Sprint(mathutil.PercentileOfDuration(kanaTimes[kana], 50.0).Round(time.Millisecond)),
+				fmt.Sprint(percentileOfDuration(kanaTimes[kana], 95.0).Round(time.Millisecond)),
+				fmt.Sprint(percentileOfDuration(kanaTimes[kana], 50.0).Round(time.Millisecond)),
 			})
 		}
 	}
@@ -467,6 +472,112 @@ func min(values ...int) int {
 		}
 	}
 	return working
+}
+
+// percentileOfDuration finds the relative standing in a slice of durations
+func percentileOfDuration(input []time.Duration, percentile float64) time.Duration {
+	if len(input) == 0 {
+		return 0
+	}
+	return percentileSortedDurations(copySortDurations(input), percentile)
+}
+
+// percentileSortedDurations finds the relative standing in a sorted slice of durations
+func percentileSortedDurations(sortedInput []time.Duration, percentile float64) time.Duration {
+	index := (percentile / 100.0) * float64(len(sortedInput))
+	if index == float64(int64(index)) {
+		i := int(roundPlaces(index, 0))
+
+		if i < 1 {
+			return 0
+		}
+		return meanDurations([]time.Duration{sortedInput[i-1], sortedInput[i]})
+	}
+
+	i := int(roundPlaces(index, 0))
+	if i < 1 {
+		return time.Duration(0)
+	}
+	return sortedInput[i-1]
+}
+
+// copySortDurations copies and sorts an array of floats.
+func copySortDurations(input []time.Duration) []time.Duration {
+	inputCopy := copyDurations(input)
+	sort.Sort(durations(inputCopy))
+	return inputCopy
+}
+
+// copyDurations copies an array of time.Duration.
+func copyDurations(input []time.Duration) []time.Duration {
+	output := make([]time.Duration, len(input))
+	copy(output, input)
+	return output
+}
+
+// durations is an array of durations.
+type durations []time.Duration
+
+// Len implements sort.Sorter
+func (d durations) Len() int {
+	return len(d)
+}
+
+// Swap implements sort.Sorter
+func (d durations) Swap(i, j int) {
+	d[i], d[j] = d[j], d[i]
+}
+
+// Less implements sort.Sorter
+func (d durations) Less(i, j int) bool {
+	return d[i] < d[j]
+}
+
+// meanDurations gets the average of a slice of numbers
+func meanDurations(input []time.Duration) time.Duration {
+	if len(input) == 0 {
+		return 0
+	}
+
+	sum := sumDurations(input)
+	mean := uint64(sum) / uint64(len(input))
+	return time.Duration(mean)
+}
+
+// sumDurations adds all the numbers of a slice together
+func sumDurations(values []time.Duration) time.Duration {
+	var total time.Duration
+	for x := 0; x < len(values); x++ {
+		total += values[x]
+	}
+
+	return total
+}
+
+// roundPlaces a float to a specific decimal place or precision
+func roundPlaces(input float64, places int) float64 {
+	if math.IsNaN(input) {
+		return 0.0
+	}
+
+	sign := 1.0
+	if input < 0 {
+		sign = -1
+		input *= -1
+	}
+
+	rounded := float64(0)
+	precision := math.Pow(10, float64(places))
+	digit := input * precision
+	_, decimal := math.Modf(digit)
+
+	if decimal >= 0.5 {
+		rounded = math.Ceil(digit)
+	} else {
+		rounded = math.Floor(digit)
+	}
+
+	return rounded / precision * sign
 }
 
 func fatal(err error) {
