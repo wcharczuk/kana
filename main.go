@@ -598,5 +598,6 @@ func formatIntP(value *int) string {
 	if value == nil || *value == 0 {
 		return "n/a"
 	}
+
 	return ansi.ColorLightWhite.Apply(strconv.Itoa(*value))
 }
