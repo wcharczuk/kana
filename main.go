@@ -390,7 +390,7 @@ func incrementCount(values map[string]int, key string) {
 }
 
 func printResults(total, incorrect map[string]int, values map[string]string, weights map[string]float64, kanaTimes map[string][]time.Duration) {
-	if len(incorrect) == 0 {
+	if len(values) == 0 {
 		return
 	}
 	columns := []string{
@@ -417,8 +417,10 @@ func printResults(total, incorrect map[string]int, values map[string]string, wei
 		}
 	}
 	sort.Slice(rows, func(i, j int) bool {
-		// sort by weight
-		return rows[i][3] > rows[j][3]
+		// sort by p95
+		iv, _ := time.ParseDuration(rows[i][4])
+		jv, _ := time.ParseDuration(rows[j][4])
+		return iv > jv
 	})
 
 	fmt.Println("Results:")
