@@ -96,24 +96,27 @@ func main() {
 			history = listAddFixedLength(history, kana, effectiveMaxRepeatHistory)
 
 			start = time.Now()
-			totalAnswered++
-			incrementCount(total, kana)
 
 			if isCorrect, err = ask(kana, roman); err != nil {
 				if err == errQuit {
 					finish()
 				}
 			} else if isCorrect {
+				totalAnswered++
+				incrementCount(total, kana)
 				decreaseWeight(weights, kana)
 				totalCorrect++
 				fmt.Printf("(%d/%d) correct!\n", totalCorrect, totalAnswered)
 			} else {
+				totalAnswered++
+				incrementCount(total, kana)
 				increaseWeight(weights, kana)
 				incrementCount(incorrect, kana)
 				fmt.Printf("(%d/%d) incorrect (%s)!\n", totalCorrect, totalAnswered, roman)
 			}
 
 			elapsed = time.Since(start)
+
 			kanaTimes[kana] = append(kanaTimes[kana], elapsed)
 			times = append(times, elapsed)
 		}
@@ -146,7 +149,7 @@ var katakana = map[string]string{
 	"ノ": "no",
 	"ハ": "ha",
 	"ヒ": "hi",
-	"フ": "hu",
+	"フ": "fu",
 	"ヘ": "he",
 	"ホ": "ho",
 	"マ": "ma",
